@@ -1,6 +1,8 @@
 import java.io.*;
 import java.net.*;
 import java.nio.file.*;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
@@ -40,7 +42,7 @@ public class PeerProcess {
         this.numPieces = commonConfig.getNumPieces();
         this.bitfield = new BitSet(numPieces);
 
-        this.logWriter = new PrintWriter(new FileWriter(peerDir + "/log_peer_" + peerId + ".log"), true);
+        this.logWriter = new PrintWriter(new FileWriter("log_peer_" + peerId + ".log"), true);
 
         this.chokeManager = new ChokeManager(
                 commonConfig.getNumberOfPreferredNeighbors(),
@@ -112,6 +114,7 @@ public class PeerProcess {
             out.write(new Handshake(Integer.parseInt(peerId)).encode());
             out.flush();
 
+            log("Peer " + peerId + " is connected from Peer " + remoteId + ".");
             startConnection(socket, in, out, remoteId);
         } catch (Exception e) {
             log("Incoming connection error: " + e.getMessage());
@@ -122,6 +125,7 @@ public class PeerProcess {
     private void connectToPeer(PeerInfo p) {
         try {
             Socket socket = new Socket(p.getHostName(), p.getPort());
+            log("Peer " + peerId + " makes a connection to Peer " + p.getPeerId() + ".");
             OutputStream out = socket.getOutputStream();
             out.write(new Handshake(Integer.parseInt(peerId)).encode());
             out.flush();
@@ -162,25 +166,25 @@ public class PeerProcess {
                 switch (msg.getType()) {
                     case MessageTypes.CHOKE:
                         conn.unchokedByThem = false;
-                        log("Peer " + peerId + " is choked by " + remoteId);
+                        log("Peer " + peerId + " is choked by " + remoteId + ".");
                         break;
                     case MessageTypes.UNCHOKE:
                         conn.unchokedByThem = true;
-                        log("Peer " + peerId + " is unchoked by " + remoteId);
+                        log("Peer " + peerId + " is unchoked by " + remoteId + ".");
                         requestNextPiece(conn);
                         break;
                     case MessageTypes.INTERESTED:
                         chokeManager.setInterested(remoteId, true);
-                        log("Peer " + peerId + " received the 'interested' message from " + remoteId);
+                        log("Peer " + peerId + " received the 'interested' message from " + remoteId + ".");
                         break;
                     case MessageTypes.NOT_INTERESTED:
                         chokeManager.setInterested(remoteId, false);
-                        log("Peer " + peerId + " received the 'not interested' message from " + remoteId);
+                        log("Peer " + peerId + " received the 'not interested' message from " + remoteId + ".");
                         break;
                     case MessageTypes.HAVE:
                         int haveIdx = msg.getPieceIndex();
                         conn.remoteBitfield.set(haveIdx);
-                        log("Peer " + peerId + " received the 'have' message from " + remoteId + " for piece " + haveIdx);
+                        log("Peer " + peerId + " received the 'have' message from " + remoteId + " for the piece " + haveIdx + ".");
                         updateInterest(conn);
                         break;
                     case MessageTypes.BITFIELD:
@@ -202,7 +206,7 @@ public class PeerProcess {
                         writePiece(pIdx, content);
                         bitfield.set(pIdx);
                         chokeManager.recordDownload(remoteId, 4 + content.length);
-                        log("Peer " + peerId + " has downloaded the piece " + pIdx + " from " + remoteId);
+                        log("Peer " + peerId + " has downloaded the piece " + pIdx + " from " + remoteId + ". Now the number of pieces it has is " + bitfield.cardinality() + ".");
                         broadcastHave(pIdx);
                         if (bitfield.cardinality() == numPieces && !hasCompleteFile.get()) {
                             hasCompleteFile.set(true);
@@ -305,8 +309,11 @@ public class PeerProcess {
         }
     }
 
+    private static final DateTimeFormatter LOG_TIME_FMT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
     private void log(String msg) {
-        logWriter.println("[" + System.currentTimeMillis() + "] " + msg);
+        logWriter.println("[" + LocalDateTime.now().format(LOG_TIME_FMT) + "]: " + msg);
     }
 
     private class ChokeListenerImpl implements ChokeManager.ChokeListener {
@@ -322,11 +329,11 @@ public class PeerProcess {
         }
         @Override
         public void onPreferredNeighborsChanged(List<String> preferred) {
-            log("Peer " + peerId + " has the preferred neighbors " + preferred);
+            log("Peer " + peerId + " has the preferred neighbors " + String.join(",", preferred) + ".");
         }
         @Override
         public void onOptimisticNeighborChanged(String pid) {
-            log("Peer " + peerId + " has the optimistically unchoked neighbor " + pid);
+            log("Peer " + peerId + " has the optimistically unchoked neighbor " + pid + ".");
         }
         @Override
         public boolean hasCompleteFile() {
