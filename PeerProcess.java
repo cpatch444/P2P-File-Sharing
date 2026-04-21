@@ -25,6 +25,9 @@ public class PeerProcess {
     private final ChokeManager chokeManager;
     private final PrintWriter logWriter;
 
+    private final Map<String, Boolean> peerComplete = new ConcurrentHashMap<>();
+    private volatile boolean terminated = false;
+
     public PeerProcess(String peerId) throws Exception {
         this.peerId = peerId;
         this.commonConfig = new CommonConfig("Common.cfg");
@@ -58,6 +61,11 @@ public class PeerProcess {
             }
             hasCompleteFile.set(true);
         }
+
+        for (PeerInfo p : peerInfoConfig.getPeers()) {
+            peerComplete.put(p.getPeerId(), false);
+        }
+        peerComplete.put(peerId, hasCompleteFile.get());
     }
 
     public void run() throws Exception {
@@ -186,11 +194,19 @@ public class PeerProcess {
                         conn.remoteBitfield.set(haveIdx);
                         log("Peer " + peerId + " received the 'have' message from " + remoteId + " for the piece " + haveIdx + ".");
                         updateInterest(conn);
+                        if (conn.remoteBitfield.cardinality() == numPieces) {
+                            peerComplete.put(remoteId, true);
+                            checkTermination();
+                        }
                         break;
                     case MessageTypes.BITFIELD:
                         decodeBitfieldInto(msg.getPayload(), conn.remoteBitfield);
                         log("Peer " + peerId + " received the 'bitfield' message from " + remoteId);
                         updateInterest(conn);
+                        if (conn.remoteBitfield.cardinality() == numPieces) {
+                            peerComplete.put(remoteId, true);
+                            checkTermination();
+                        }
                         if (conn.unchokedByThem) requestNextPiece(conn);
                         break;
                     case MessageTypes.REQUEST:
@@ -212,6 +228,8 @@ public class PeerProcess {
                             hasCompleteFile.set(true);
                             finalizeDownload();
                             log("Peer " + peerId + " has downloaded the complete file.");
+                            peerComplete.put(peerId, true);
+                            checkTermination();
                         }
                         requestNextPiece(conn);
                         break;
@@ -314,6 +332,24 @@ public class PeerProcess {
 
     private void log(String msg) {
         logWriter.println("[" + LocalDateTime.now().format(LOG_TIME_FMT) + "]: " + msg);
+    }
+
+    private void checkTermination() {
+        if (terminated) return;
+        for (Boolean b : peerComplete.values()) {
+            if (!Boolean.TRUE.equals(b)) return;
+        }
+        terminated = true;
+        shutdown();
+    }
+
+    private void shutdown() {
+        logWriter.flush();
+        logWriter.close();
+        for (Connection c : connections.values()) {
+            try { c.socket.close(); } catch (IOException ignored) {}
+        }
+        System.exit(0);
     }
 
     private class ChokeListenerImpl implements ChokeManager.ChokeListener {
