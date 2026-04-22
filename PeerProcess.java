@@ -29,6 +29,7 @@ public class peerProcess {
 
     private final Map<String, Boolean> peerComplete = new ConcurrentHashMap<>();
     private volatile boolean terminated = false;
+    private final int myIndex;
 
     public peerProcess(String peerId) throws Exception {
         this.peerId = peerId;
@@ -38,6 +39,18 @@ public class peerProcess {
         if (myInfo == null) {
             throw new IllegalArgumentException("Peer " + peerId + " not in PeerInfo.cfg");
         }
+        int idx = -1;
+        List<PeerInfo> peers = peerInfoConfig.getPeers();
+        for (int i = 0; i < peers.size(); i++) {
+            if (peers.get(i).getPeerId().equals(peerId)) {
+                idx = i;
+                break;
+            }
+        }
+        if (idx < 0) {
+            throw new IllegalArgumentException("Peer " + peerId + " not found in PeerInfo.cfg");
+        }
+        this.myIndex = idx;
 
         this.peerDir = "peer_" + peerId;
         Files.createDirectories(Paths.get(peerDir));
@@ -75,13 +88,6 @@ public class peerProcess {
         new Thread(() -> acceptConnections(serverSocket)).start();
 
         List<PeerInfo> peers = peerInfoConfig.getPeers();
-        int myIndex = -1;
-        for (int i = 0; i < peers.size(); i++) {
-            if (peers.get(i).getPeerId().equals(peerId)) {
-                myIndex = i;
-                break;
-            }
-        }
         for (int i = 0; i < myIndex; i++) {
             connectToPeer(peers.get(i));
         }
@@ -119,6 +125,9 @@ public class peerProcess {
             InputStream in = socket.getInputStream();
             Handshake hs = Handshake.decode(in);
             String remoteId = String.valueOf(hs.getPeerId());
+            if (!isValidIncomingPeer(remoteId)) {
+                throw new IOException("Unexpected incoming handshake peer: " + remoteId);
+            }
 
             OutputStream out = socket.getOutputStream();
             out.write(new Handshake(Integer.parseInt(peerId)).encode());
@@ -289,6 +298,20 @@ public class peerProcess {
         for (Connection c : connections.values()) {
             updateInterest(c);
         }
+    }
+
+    private boolean isValidIncomingPeer(String remoteId) {
+        if (remoteId.equals(peerId)) return false;
+        if (connections.containsKey(remoteId)) return false;
+        List<PeerInfo> peers = peerInfoConfig.getPeers();
+        int remoteIndex = -1;
+        for (int i = 0; i < peers.size(); i++) {
+            if (peers.get(i).getPeerId().equals(remoteId)) {
+                remoteIndex = i;
+                break;
+            }
+        }
+        return remoteIndex > myIndex;
     }
 
     private void broadcastHave(int pieceIdx) {
