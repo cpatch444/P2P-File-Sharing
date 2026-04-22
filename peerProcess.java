@@ -65,7 +65,8 @@ public class PeerProcess {
 
         this.chokeManager = new ChokeManager(
                 commonConfig.getNumberOfPreferredNeighbors(),
-                new ChokeListenerImpl());
+                new ChokeListenerImpl()
+        );
 
         // If this peer starts with the complete file, mark all pieces as present
         Path complete = Paths.get(peerDir, commonConfig.getFileName());
@@ -98,12 +99,14 @@ public class PeerProcess {
                 () -> chokeManager.selectPreferredNeighbors(),
                 commonConfig.getUnchokingInterval(),
                 commonConfig.getUnchokingInterval(),
-                TimeUnit.SECONDS);
+                TimeUnit.SECONDS
+        );
         scheduler.scheduleAtFixedRate(
                 () -> chokeManager.selectOptimisticNeighbor(),
                 commonConfig.getOptimisticUnchokingInterval(),
                 commonConfig.getOptimisticUnchokingInterval(),
-                TimeUnit.SECONDS);
+                TimeUnit.SECONDS
+        );
 
         Thread.currentThread().join();
     }
@@ -136,16 +139,12 @@ public class PeerProcess {
             startConnection(socket, in, out, remoteId);
         } catch (Exception e) {
             log("Incoming connection error: " + e.getMessage());
-            try {
-                socket.close();
-            } catch (IOException ignored) {
-            }
+            try { socket.close(); } catch (IOException ignored) {}
         }
     }
 
     private void connectToPeer(PeerInfo p) {
-        if (connections.containsKey(p.getPeerId()) || terminated)
-            return;
+        if (connections.containsKey(p.getPeerId()) || terminated) return;
         try {
             Socket socket = new Socket(p.getHostName(), p.getPort());
             log("Peer " + peerId + " makes a connection to Peer " + p.getPeerId() + ".");
@@ -170,8 +169,7 @@ public class PeerProcess {
     private void connectWithRetry(PeerInfo p) {
         while (!terminated && !connections.containsKey(p.getPeerId())) {
             connectToPeer(p);
-            if (connections.containsKey(p.getPeerId()) || terminated)
-                return;
+            if (connections.containsKey(p.getPeerId()) || terminated) return;
             try {
                 Thread.sleep(2000);
             } catch (InterruptedException e) {
@@ -184,10 +182,7 @@ public class PeerProcess {
     private void startConnection(Socket socket, InputStream in, OutputStream out, String remoteId) {
         Connection conn = new Connection(socket, in, out, remoteId);
         if (connections.putIfAbsent(remoteId, conn) != null) {
-            try {
-                socket.close();
-            } catch (IOException ignored) {
-            }
+            try { socket.close(); } catch (IOException ignored) {}
             return;
         }
         chokeManager.addPeer(remoteId);
@@ -231,8 +226,7 @@ public class PeerProcess {
                     case MessageTypes.HAVE:
                         int haveIdx = msg.getPieceIndex();
                         if (!conn.remoteBitfield.get(haveIdx)) {
-                            log("Peer " + peerId + " received the 'have' message from " + remoteId + " for the piece "
-                                    + haveIdx + ".");
+                            log("Peer " + peerId + " received the 'have' message from " + remoteId + " for the piece " + haveIdx + ".");
                         }
                         conn.remoteBitfield.set(haveIdx);
                         updateInterest(conn);
@@ -249,15 +243,13 @@ public class PeerProcess {
                             peerComplete.put(remoteId, true);
                             checkTermination();
                         }
-                        if (conn.unchokedByThem)
-                            requestNextPiece(conn);
+                        if (conn.unchokedByThem) requestNextPiece(conn);
                         break;
                     case MessageTypes.REQUEST:
                         int reqIdx = msg.getPieceIndex();
                         if (chokeManager.isUnchoked(remoteId) && hasPiece(reqIdx)) {
                             byte[] piece = readPiece(reqIdx);
-                            if (piece != null)
-                                sendOrHandleFailure(conn, Message.piece(reqIdx, piece), "piece");
+                            if (piece != null) sendOrHandleFailure(conn, Message.piece(reqIdx, piece), "piece");
                         }
                         break;
                     case MessageTypes.PIECE:
@@ -272,8 +264,7 @@ public class PeerProcess {
                         writePiece(pIdx, content);
                         setPiece(pIdx);
                         chokeManager.recordDownload(remoteId, 4 + content.length);
-                        log("Peer " + peerId + " has downloaded the piece " + pIdx + " from " + remoteId
-                                + ". Now the number of pieces it has is " + localPieceCount() + ".");
+                        log("Peer " + peerId + " has downloaded the piece " + pIdx + " from " + remoteId + ". Now the number of pieces it has is " + localPieceCount() + ".");
                         broadcastHave(pIdx);
                         updateInterestForAllConnections();
                         if (localPieceCount() == numPieces && !hasCompleteFile.get()) {
@@ -308,18 +299,15 @@ public class PeerProcess {
     }
 
     private void requestNextPiece(Connection conn) {
-        if (!conn.unchokedByThem)
-            return;
-        if (conn.outstandingRequest != null)
-            return;
+        if (!conn.unchokedByThem) return;
+        if (conn.outstandingRequest != null) return;
         List<Integer> candidates = new ArrayList<>();
         for (int i = 0; i < numPieces; i++) {
             if (!hasPiece(i) && conn.remoteBitfield.get(i) && !requestedPieces.contains(i)) {
                 candidates.add(i);
             }
         }
-        if (candidates.isEmpty())
-            return;
+        if (candidates.isEmpty()) return;
         int pieceIdx = candidates.get(random.nextInt(candidates.size()));
         if (requestedPieces.add(pieceIdx)) {
             conn.outstandingRequest = pieceIdx;
@@ -342,10 +330,8 @@ public class PeerProcess {
     }
 
     private boolean isValidIncomingPeer(String remoteId) {
-        if (remoteId.equals(peerId))
-            return false;
-        if (connections.containsKey(remoteId))
-            return false;
+        if (remoteId.equals(peerId)) return false;
+        if (connections.containsKey(remoteId)) return false;
         List<PeerInfo> peers = peerInfoConfig.getPeers();
         int remoteIndex = -1;
         for (int i = 0; i < peers.size(); i++) {
@@ -365,8 +351,7 @@ public class PeerProcess {
     }
 
     private boolean sendOrHandleFailure(Connection conn, Message msg, String context) {
-        if (conn.send(msg))
-            return true;
+        if (conn.send(msg)) return true;
         handleSendFailure(conn, context);
         return false;
     }
@@ -376,10 +361,7 @@ public class PeerProcess {
         connections.remove(conn.remotePeerId, conn);
         chokeManager.removePeer(conn.remotePeerId);
         log("Send failed for " + context + " message to Peer " + conn.remotePeerId + ".");
-        try {
-            conn.socket.close();
-        } catch (IOException ignored) {
-        }
+        try { conn.socket.close(); } catch (IOException ignored) {}
     }
 
     private byte[] encodeBitfield() {
@@ -407,12 +389,10 @@ public class PeerProcess {
         Path path = hasCompleteFile.get()
                 ? Paths.get(peerDir, commonConfig.getFileName())
                 : Paths.get(peerDir, commonConfig.getFileName() + ".downloading");
-        if (!Files.exists(path))
-            return null;
+        if (!Files.exists(path)) return null;
         try (RandomAccessFile raf = new RandomAccessFile(path.toFile(), "r")) {
             long pos = (long) index * pieceSize;
-            if (pos >= raf.length())
-                return null;
+            if (pos >= raf.length()) return null;
             int len = (int) Math.min(pieceSize, raf.length() - pos);
             byte[] buf = new byte[len];
             raf.seek(pos);
@@ -460,18 +440,17 @@ public class PeerProcess {
         }
     }
 
-    private static final DateTimeFormatter LOG_TIME_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final DateTimeFormatter LOG_TIME_FMT =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private void log(String msg) {
         logWriter.println("[" + LocalDateTime.now().format(LOG_TIME_FMT) + "]: " + msg);
     }
 
     private void checkTermination() {
-        if (terminated)
-            return;
+        if (terminated) return;
         for (Boolean b : peerComplete.values()) {
-            if (!Boolean.TRUE.equals(b))
-                return;
+            if (!Boolean.TRUE.equals(b)) return;
         }
         terminated = true;
         shutdown();
@@ -481,10 +460,7 @@ public class PeerProcess {
         logWriter.flush();
         logWriter.close();
         for (Connection c : connections.values()) {
-            try {
-                c.socket.close();
-            } catch (IOException ignored) {
-            }
+            try { c.socket.close(); } catch (IOException ignored) {}
         }
         System.exit(0);
     }
@@ -493,27 +469,21 @@ public class PeerProcess {
         @Override
         public void onUnchoke(String pid) {
             Connection c = connections.get(pid);
-            if (c != null)
-                sendOrHandleFailure(c, Message.unchoke(), "unchoke");
+            if (c != null) sendOrHandleFailure(c, Message.unchoke(), "unchoke");
         }
-
         @Override
         public void onChoke(String pid) {
             Connection c = connections.get(pid);
-            if (c != null)
-                sendOrHandleFailure(c, Message.choke(), "choke");
+            if (c != null) sendOrHandleFailure(c, Message.choke(), "choke");
         }
-
         @Override
         public void onPreferredNeighborsChanged(List<String> preferred) {
             log("Peer " + peerId + " has the preferred neighbors " + String.join(",", preferred) + ".");
         }
-
         @Override
         public void onOptimisticNeighborChanged(String pid) {
             log("Peer " + peerId + " has the optimistically unchoked neighbor " + pid + ".");
         }
-
         @Override
         public boolean hasCompleteFile() {
             return hasCompleteFile.get();
@@ -543,8 +513,7 @@ public class PeerProcess {
                 try {
                     m.send(out);
                     return true;
-                } catch (IOException ignored) {
-                }
+                } catch (IOException ignored) {}
                 return false;
             }
         }
