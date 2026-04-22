@@ -7,7 +7,7 @@ import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 
-public class PeerProcess {
+public class peerProcess {
     private final String peerId;
     private final CommonConfig commonConfig;
     private final PeerInfoConfig peerInfoConfig;
@@ -20,6 +20,8 @@ public class PeerProcess {
 
     private final BitSet bitfield;
     private final AtomicBoolean hasCompleteFile = new AtomicBoolean(false);
+    private final Set<Integer> requestedPieces = ConcurrentHashMap.newKeySet();
+    private final Random random = new Random();
 
     private final Map<String, Connection> connections = new ConcurrentHashMap<>();
     private final ChokeManager chokeManager;
@@ -28,7 +30,7 @@ public class PeerProcess {
     private final Map<String, Boolean> peerComplete = new ConcurrentHashMap<>();
     private volatile boolean terminated = false;
 
-    public PeerProcess(String peerId) throws Exception {
+    public peerProcess(String peerId) throws Exception {
         this.peerId = peerId;
         this.commonConfig = new CommonConfig("Common.cfg");
         this.peerInfoConfig = new PeerInfoConfig("PeerInfo.cfg");
@@ -174,6 +176,7 @@ public class PeerProcess {
                 switch (msg.getType()) {
                     case MessageTypes.CHOKE:
                         conn.unchokedByThem = false;
+                        releaseOutstandingRequest(conn);
                         log("Peer " + peerId + " is choked by " + remoteId + ".");
                         break;
                     case MessageTypes.UNCHOKE:
@@ -219,11 +222,13 @@ public class PeerProcess {
                     case MessageTypes.PIECE:
                         int pIdx = msg.getPieceIndex();
                         byte[] content = msg.getPieceContent();
+                        releaseOutstandingRequest(conn);
                         writePiece(pIdx, content);
                         bitfield.set(pIdx);
                         chokeManager.recordDownload(remoteId, 4 + content.length);
                         log("Peer " + peerId + " has downloaded the piece " + pIdx + " from " + remoteId + ". Now the number of pieces it has is " + bitfield.cardinality() + ".");
                         broadcastHave(pIdx);
+                        updateInterestForAllConnections();
                         if (bitfield.cardinality() == numPieces && !hasCompleteFile.get()) {
                             hasCompleteFile.set(true);
                             finalizeDownload();
@@ -238,6 +243,7 @@ public class PeerProcess {
                 }
             }
         } catch (IOException e) {
+            releaseOutstandingRequest(conn);
             connections.remove(remoteId);
             chokeManager.removePeer(remoteId);
         }
@@ -256,11 +262,32 @@ public class PeerProcess {
 
     private void requestNextPiece(Connection conn) {
         if (!conn.unchokedByThem) return;
+        if (conn.outstandingRequest != null) return;
+        List<Integer> candidates = new ArrayList<>();
         for (int i = 0; i < numPieces; i++) {
-            if (!bitfield.get(i) && conn.remoteBitfield.get(i)) {
-                conn.send(Message.request(i));
-                return;
+            if (!bitfield.get(i) && conn.remoteBitfield.get(i) && !requestedPieces.contains(i)) {
+                candidates.add(i);
             }
+        }
+        if (candidates.isEmpty()) return;
+        int pieceIdx = candidates.get(random.nextInt(candidates.size()));
+        if (requestedPieces.add(pieceIdx)) {
+            conn.outstandingRequest = pieceIdx;
+            conn.send(Message.request(pieceIdx));
+        }
+    }
+
+    private void releaseOutstandingRequest(Connection conn) {
+        Integer outstanding = conn.outstandingRequest;
+        if (outstanding != null) {
+            requestedPieces.remove(outstanding);
+            conn.outstandingRequest = null;
+        }
+    }
+
+    private void updateInterestForAllConnections() {
+        for (Connection c : connections.values()) {
+            updateInterest(c);
         }
     }
 
@@ -384,6 +411,7 @@ public class PeerProcess {
         final String remotePeerId;
         final BitSet remoteBitfield = new BitSet();
         volatile boolean unchokedByThem = false;
+        volatile Integer outstandingRequest = null;
         private final Object sendLock = new Object();
 
         Connection(Socket socket, InputStream in, OutputStream out, String remotePeerId) {
@@ -404,11 +432,11 @@ public class PeerProcess {
 
     public static void main(String[] args) {
         if (args.length != 1) {
-            System.err.println("Usage: java PeerProcess <peerId>");
+            System.err.println("Usage: java peerProcess <peerId>");
             System.exit(1);
         }
         try {
-            new PeerProcess(args[0]).run();
+            new peerProcess(args[0]).run();
         } catch (Exception e) {
             e.printStackTrace();
             System.exit(1);
